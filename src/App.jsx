@@ -6,11 +6,11 @@ import {
 import { api } from "./api.js";
 import { getSocket, disconnectSocket } from "./socket.js";
 import {
-  Bot, Send, Upload, FileText, LayoutDashboard, MessageSquare, Mic, Volume2,
+  Bot, Send, Upload, FileText, LayoutDashboard, MessageSquare,
   User, Shield, Search, PlusCircle, Bell, Settings, LogOut, ScrollText, X,
   Mail, Lock, Eye, EyeOff, Home, Users, Calendar, Heart, MessageCircle, Share2,
   Bookmark, Sparkles, TrendingUp, MapPin, Clock, UserPlus, Image as ImageIcon,
-  Smile, CheckCircle2, Briefcase, Loader2, KeyRound, Edit3, Check,
+  Smile, CheckCircle2, Briefcase, Loader2, KeyRound, Edit3, Check, Paperclip,
 } from "lucide-react";
 
 /* ---------- Primitives ---------- */
@@ -34,8 +34,14 @@ function Button({ children, className = "", variant = "default", size = "default
 function Card({ children, className = "" }) { return <div className={`border border-slate-200/70 bg-white ${className}`}>{children}</div>; }
 function CardContent({ children, className = "" }) { return <div className={className}>{children}</div>; }
 
-function Avatar({ name, size = 40, gradient = "from-indigo-500 to-violet-500" }) {
+function Avatar({ name, src, size = 40, gradient = "from-indigo-500 to-violet-500" }) {
   const initials = (name || "?").split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
+  if (src) {
+    return (
+      <img src={src} alt={name || "avatar"} style={{ width: size, height: size }}
+        className="shrink-0 rounded-full object-cover shadow-sm" />
+    );
+  }
   return (
     <div style={{ width: size, height: size, fontSize: size * 0.4 }}
       className={`flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${gradient} font-semibold text-white shadow-sm`}>
@@ -46,21 +52,38 @@ function Avatar({ name, size = 40, gradient = "from-indigo-500 to-violet-500" })
 
 function Spinner({ size = 18 }) { return <Loader2 size={size} className="animate-spin text-indigo-600" />; }
 
-function timeAgo(ts) {
-  if (!ts) return "";
-  // MySQL DATETIME comes through mysql2 as a Date → JSON.stringify gives ISO with Z.
-  // If it's a plain "YYYY-MM-DD HH:MM:SS" string (no T/Z), treat as UTC.
+function parseTs(ts) {
+  if (!ts) return null;
   const iso = typeof ts === "string" && !/[zZ]|[+\-]\d\d:?\d\d$/.test(ts)
     ? ts.replace(" ", "T") + "Z"
     : ts;
   const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function timeAgo(ts) {
+  const d = parseTs(ts);
+  if (!d) return "";
   const sec = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (sec < 0) return "just now";
+  if (sec < 5) return "just now";
   if (sec < 60) return `${sec}s ago`;
   if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
   if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
   if (sec < 604800) return `${Math.floor(sec / 86400)}d ago`;
   return d.toLocaleDateString();
+}
+
+function clockTime(ts) {
+  const d = parseTs(ts);
+  if (!d) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return time;
+  if (isYesterday) return `Yesterday ${time}`;
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
 }
 
 const gradientForId = (id) => {
@@ -82,10 +105,11 @@ const NAV_ITEMS = [
   { to: "/events", label: "Events", icon: Calendar },
   { to: "/documents", label: "Documents", icon: FileText },
   { to: "/notifications", label: "Notifications", icon: Bell, badgeKey: "unreadNotifications" },
-  { to: "/admin", label: "Admin Upload", icon: Shield },
+  { to: "/admin", label: "Admin Upload", icon: Shield, adminOnly: true },
 ];
 
-function Sidebar({ badges }) {
+function Sidebar({ badges, session }) {
+  const items = NAV_ITEMS.filter((i) => !i.adminOnly || session?.is_admin);
   return (
     <aside className="hidden min-h-screen w-72 shrink-0 border-r border-slate-200/70 bg-white/80 p-5 backdrop-blur md:block">
       <Link to="/dashboard" className="mb-8 flex items-center gap-3">
@@ -96,7 +120,7 @@ function Sidebar({ badges }) {
         </div>
       </Link>
       <nav className="space-y-1">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const Icon = item.icon;
           const badge = item.badgeKey ? badges[item.badgeKey] : 0;
           return (
@@ -138,7 +162,7 @@ function Topbar({ session, onProfileClick, unreadNotifications }) {
           {unreadNotifications > 0 && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-rose-500" />}
         </button>
         <button onClick={onProfileClick} className="flex items-center gap-2 rounded-full p-1 pr-3 transition hover:bg-slate-100">
-          <Avatar name={session?.name || "Student"} size={36} />
+          <Avatar name={session?.name || "Student"} src={api.avatarUrl(session?.avatar_path)} size={36} />
           <span className="hidden text-sm font-medium text-slate-700 md:inline">{session?.name?.split(" ")[0] || "Student"}</span>
         </button>
       </div>
@@ -151,9 +175,9 @@ function ProfilePanel({ open, onClose, session, onSignOut }) {
   const go = (path) => { onClose(); navigate(path); };
   const items = [
     { icon: User, label: "My Profile", onClick: () => go(`/profile/${session?.id}`) },
+    { icon: Settings, label: "Settings", onClick: () => go("/settings") },
     { icon: KeyRound, label: "Change Password", onClick: () => go("/change-password") },
-    { icon: Settings, label: "Settings", onClick: () => go(`/profile/${session?.id}`) },
-    { icon: ScrollText, label: "Terms and Conditions", onClick: onClose },
+    { icon: ScrollText, label: "Terms and Conditions", onClick: () => go("/terms") },
   ];
   return (
     <>
@@ -165,9 +189,12 @@ function ProfilePanel({ open, onClose, session, onSignOut }) {
         </div>
         <div className="border-b px-5 py-6">
           <div className="flex items-center gap-3">
-            <Avatar name={session?.name || "Student"} size={56} gradient={gradientForId(session?.id)} />
+            <Avatar name={session?.name || "Student"} src={api.avatarUrl(session?.avatar_path)} size={56} gradient={gradientForId(session?.id)} />
             <div>
-              <p className="text-base font-semibold text-slate-900">{session?.name || "Student"}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-base font-semibold text-slate-900">{session?.name || "Student"}</p>
+                {session?.is_admin && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">ADMIN</span>}
+              </div>
               <p className="text-xs text-slate-500">{session?.email}</p>
               {session?.branch && <p className="mt-1 text-xs text-slate-500">{session.branch}{session.year ? ` · ${session.year}` : ""}</p>}
             </div>
@@ -198,9 +225,14 @@ function ProtectedLayout({ session, badges, onSignOut, profileOpen, setProfileOp
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50/30 to-violet-50/30 text-slate-900">
       <div className="flex">
-        <Sidebar badges={badges} />
+        <Sidebar badges={badges} session={session} />
         <main className="min-h-screen flex-1">
           <Topbar session={session} onProfileClick={() => setProfileOpen(true)} unreadNotifications={badges.unreadNotifications} />
+          {session.is_suspended && (
+            <div className="border-b border-rose-200 bg-rose-50 px-5 py-3 text-sm text-rose-700">
+              Your account is suspended due to repeated policy violations. You can browse but cannot post, comment, or message.
+            </div>
+          )}
           <Outlet />
         </main>
       </div>
@@ -258,12 +290,71 @@ function DashboardPage({ session, stats }) {
 
 /* ---------- Feed (with comments + share) ---------- */
 
-function PostCard({ post, onLike, currentUser }) {
+function ShareModal({ post, currentUser, onClose }) {
+  const [people, setPeople] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [sentTo, setSentTo] = useState(new Set());
+
+  useEffect(() => {
+    let alive = true;
+    api.users.following(currentUser.id)
+      .then((d) => { if (alive) setPeople(d.users || []); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [currentUser.id]);
+
+  const sendTo = async (u) => {
+    setBusyId(u.id);
+    try {
+      const text = `📌 Shared a post from ${post.author?.name || "Campus"}:\n\n"${post.content}"\n\n${window.location.origin}/feed#post-${post.id}`;
+      await api.messages.send(u.id, text);
+      setSentTo((s) => new Set(s).add(u.id));
+    } catch (e) { alert(e.message); }
+    finally { setBusyId(null); }
+  };
+
+  return (
+    <>
+      <div onClick={onClose} className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm" />
+      <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-5 shadow-2xl">
+        <div className="flex items-center justify-between border-b pb-3">
+          <h3 className="text-lg font-bold text-slate-900">Share to a follower</h3>
+          <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100"><X size={16} /></button>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">This sends the post as a direct message. You can only share with people you follow.</p>
+        <div className="mt-4 max-h-80 space-y-1 overflow-y-auto">
+          {loading ? <div className="flex justify-center py-6"><Spinner /></div> :
+            people.length === 0 ? <p className="py-6 text-center text-sm text-slate-500">You aren't following anyone yet. Follow students from the Connect page.</p> :
+            people.map((u) => {
+              const sent = sentTo.has(u.id);
+              return (
+                <div key={u.id} className="flex items-center gap-3 rounded-2xl p-2">
+                  <Avatar name={u.name} src={api.avatarUrl(u.avatar_path)} gradient={gradientForId(u.id)} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-900">{u.name}</p>
+                    <p className="truncate text-xs text-slate-500">{u.branch || ""}{u.year ? ` · ${u.year}` : ""}</p>
+                  </div>
+                  <Button size="sm" variant={sent ? "outline" : "default"} className="rounded-xl"
+                    disabled={sent || busyId === u.id} onClick={() => sendTo(u)}>
+                    {sent ? <><Check size={12} className="mr-1" /> Sent</> : busyId === u.id ? "..." : "Send"}
+                  </Button>
+                </div>
+              );
+            })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function PostCard({ post, onLike, onTagClick, currentUser }) {
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState(null);
   const [draft, setDraft] = useState("");
-  const [shareMsg, setShareMsg] = useState("");
   const [count, setCount] = useState(post.comments);
+  const [commentError, setCommentError] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
 
   const toggleComments = async () => {
     const next = !showComments;
@@ -277,33 +368,24 @@ function PostCard({ post, onLike, currentUser }) {
   const submitComment = async (e) => {
     e.preventDefault();
     if (!draft.trim()) return;
-    const { comment } = await api.posts.comment(post.id, draft);
-    setComments((c) => [...(c || []), comment]);
-    setCount((n) => n + 1);
-    setDraft("");
+    setCommentError("");
+    try {
+      const { comment } = await api.posts.comment(post.id, draft);
+      setComments((c) => [...(c || []), comment]);
+      setCount((n) => n + 1);
+      setDraft("");
+    } catch (err) {
+      setCommentError(err.message);
+    }
   };
 
-  const share = async () => {
-    const url = `${window.location.origin}/feed#post-${post.id}`;
-    const text = `${post.author?.name || "Someone"} on Campus AI: ${post.content}`;
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: "Campus AI", text, url });
-        setShareMsg("Shared");
-      } else {
-        await navigator.clipboard.writeText(`${text} — ${url}`);
-        setShareMsg("Link copied");
-      }
-    } catch { setShareMsg("Copied"); }
-    setTimeout(() => setShareMsg(""), 1500);
-  };
 
   return (
     <Card id={`post-${post.id}`} className={`rounded-3xl shadow-sm ${post.pinned ? "ring-2 ring-indigo-200" : ""}`}>
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <Link to={`/profile/${post.author?.id}`} className="flex gap-3">
-            <Avatar name={post.author?.name} gradient={gradientForId(post.author?.id)} size={44} />
+            <Avatar name={post.author?.name} src={api.avatarUrl(post.author?.avatar_path)} gradient={gradientForId(post.author?.id)} size={44} />
             <div>
               <div className="flex items-center gap-2">
                 <p className="font-semibold text-slate-900 hover:underline">{post.author?.name || "Unknown"}</p>
@@ -314,10 +396,23 @@ function PostCard({ post, onLike, currentUser }) {
           </Link>
           <Button variant="ghost" size="icon" className="rounded-full"><Bookmark size={16} /></Button>
         </div>
-        <p className="mt-4 text-sm leading-6 text-slate-700">{post.content}</p>
+        {post.content && <p className="mt-4 text-sm leading-6 text-slate-700">{post.content}</p>}
+        {post.image_path && (
+          <img
+            src={api.postImageUrl(post.image_path)}
+            alt="post"
+            className="mt-3 max-h-[480px] w-full rounded-2xl object-cover"
+            loading="lazy"
+          />
+        )}
         {post.tags?.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
-            {post.tags.map((t) => <span key={t} className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">{t}</span>)}
+            {post.tags.map((t) => (
+              <button key={t} type="button" onClick={() => onTagClick && onTagClick(t)}
+                className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100">
+                {t}
+              </button>
+            ))}
           </div>
         )}
         <div className="mt-4 flex items-center gap-1 border-t border-slate-100 pt-3 text-slate-500">
@@ -327,8 +422,8 @@ function PostCard({ post, onLike, currentUser }) {
           <Button onClick={toggleComments} variant="ghost" size="sm" className="rounded-xl hover:text-indigo-600">
             <MessageCircle size={16} className="mr-1" /> {count}
           </Button>
-          <Button onClick={share} variant="ghost" size="sm" className="rounded-xl hover:text-emerald-600">
-            {shareMsg ? <><Check size={16} className="mr-1" /> {shareMsg}</> : <><Share2 size={16} className="mr-1" /> Share</>}
+          <Button onClick={() => setShareOpen(true)} variant="ghost" size="sm" className="rounded-xl hover:text-emerald-600">
+            <Share2 size={16} className="mr-1" /> Share
           </Button>
         </div>
 
@@ -341,7 +436,7 @@ function PostCard({ post, onLike, currentUser }) {
             ) : (
               comments.map((c) => (
                 <div key={c.id} className="flex items-start gap-2">
-                  <Avatar name={c.author_name} gradient={gradientForId(c.user_id)} size={32} />
+                  <Avatar name={c.author_name} src={api.avatarUrl(c.author_avatar)} gradient={gradientForId(c.user_id)} size={32} />
                   <div className="flex-1 rounded-2xl bg-white px-3 py-2 shadow-sm">
                     <div className="flex items-baseline justify-between gap-2">
                       <p className="text-xs font-semibold text-slate-900">{c.author_name}</p>
@@ -352,8 +447,9 @@ function PostCard({ post, onLike, currentUser }) {
                 </div>
               ))
             )}
+            {commentError && <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-600">{commentError}</div>}
             <form onSubmit={submitComment} className="flex items-center gap-2">
-              <Avatar name={currentUser?.name} gradient={gradientForId(currentUser?.id)} size={32} />
+              <Avatar name={currentUser?.name} src={api.avatarUrl(currentUser?.avatar_path)} gradient={gradientForId(currentUser?.id)} size={32} />
               <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Write a comment..."
                 className="flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400" />
               <Button type="submit" size="sm" className="rounded-xl">Post</Button>
@@ -361,6 +457,7 @@ function PostCard({ post, onLike, currentUser }) {
           </div>
         )}
       </CardContent>
+      {shareOpen && <ShareModal post={post} currentUser={currentUser} onClose={() => setShareOpen(false)} />}
     </Card>
   );
 }
@@ -368,31 +465,53 @@ function PostCard({ post, onLike, currentUser }) {
 function FeedPage({ session }) {
   const [posts, setPosts] = useState([]);
   const [draft, setDraft] = useState("");
+  const [image, setImage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [trending, setTrending] = useState([]);
+  const [activeTag, setActiveTag] = useState("");
+  const imgInputRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
-    api.posts.list()
+    setLoading(true);
+    api.posts.list(activeTag)
       .then((data) => { if (alive) setPosts(data.posts); })
       .catch((e) => { if (alive) setError(e.message); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [activeTag]);
+
+  useEffect(() => {
+    let alive = true;
+    api.posts.trending().then((d) => { if (alive) setTrending(d.trending || []); }).catch(() => {});
+    return () => { alive = false; };
+  }, [posts.length]);
 
   const submit = async () => {
-    if (!draft.trim()) return;
+    if (!draft.trim() && !image) return;
+    setError("");
     try {
       const tags = (draft.match(/#\w+/g) || []);
-      const { post } = await api.posts.create({ content: draft, tags });
+      const { post } = await api.posts.create(draft, tags, image);
       setPosts((p) => [post, ...p]);
-      setDraft("");
+      setDraft(""); setImage(null);
     } catch (e) { setError(e.message); }
   };
 
+  const onPickImage = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) { setError("Max image size is 10 MB."); return; }
+    setImage(f);
+    e.target.value = "";
+  };
+
   const toggleLike = async (id) => {
-    await api.posts.like(id);
-    setPosts((ps) => ps.map((p) => p.id === id ? { ...p, liked: !p.liked, likes: p.likes + (p.liked ? -1 : 1) } : p));
+    try {
+      const { liked, likes } = await api.posts.like(id);
+      setPosts((ps) => ps.map((p) => p.id === id ? { ...p, liked, likes } : p));
+    } catch (e) { setError(e.message); }
   };
 
   return (
@@ -401,44 +520,76 @@ function FeedPage({ session }) {
         <Card className="rounded-3xl shadow-sm">
           <CardContent className="p-5">
             <div className="flex gap-3">
-              <Avatar name={session?.name} size={44} gradient={gradientForId(session?.id)} />
+              <Avatar name={session?.name} src={api.avatarUrl(session?.avatar_path)} size={44} gradient={gradientForId(session?.id)} />
               <div className="flex-1">
                 <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Share something with your campus... (use #tags)" rows={2}
-                  className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-indigo-400 focus:bg-white" />
+                  disabled={session?.is_suspended}
+                  className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-indigo-400 focus:bg-white disabled:opacity-50" />
+
+                {image && (
+                  <div className="mt-3 relative inline-block">
+                    <img src={URL.createObjectURL(image)} alt="preview" className="max-h-64 rounded-2xl border border-slate-200" />
+                    <button type="button" onClick={() => setImage(null)}
+                      className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-white shadow"><X size={12} /></button>
+                  </div>
+                )}
+
+                <input ref={imgInputRef} type="file" accept="image/*" className="hidden" onChange={onPickImage} />
+
                 <div className="mt-3 flex items-center justify-between">
                   <div className="flex gap-1">
-                    <Button variant="ghost" size="sm" className="rounded-xl"><ImageIcon size={16} className="mr-1" /> Photo</Button>
-                    <Button variant="ghost" size="sm" className="rounded-xl"><Smile size={16} className="mr-1" /> Mood</Button>
+                    <Button variant="ghost" size="sm" className="rounded-xl" type="button"
+                      onClick={() => imgInputRef.current?.click()} disabled={session?.is_suspended}>
+                      <ImageIcon size={16} className="mr-1" /> Photo
+                    </Button>
+                    <Button variant="ghost" size="sm" className="rounded-xl" type="button" disabled><Smile size={16} className="mr-1" /> Mood</Button>
                   </div>
-                  <Button onClick={submit} size="sm" className="rounded-xl">Post</Button>
+                  <Button onClick={submit} size="sm" className="rounded-xl" disabled={session?.is_suspended || (!draft.trim() && !image)}>Post</Button>
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
+        {activeTag && (
+          <div className="flex items-center justify-between rounded-2xl bg-indigo-50 px-4 py-3 text-sm">
+            <span className="text-indigo-700">Showing posts tagged <span className="font-bold">{activeTag}</span></span>
+            <button onClick={() => setActiveTag("")} className="rounded-full p-1 text-indigo-700 hover:bg-indigo-100"><X size={14} /></button>
+          </div>
+        )}
         {error && <div className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div>}
         {loading && <div className="flex justify-center py-10"><Spinner /></div>}
         {!loading && posts.length === 0 && (
-          <Card className="rounded-3xl shadow-sm"><CardContent className="p-8 text-center text-sm text-slate-500">No posts yet. Be the first to share something!</CardContent></Card>
+          <Card className="rounded-3xl shadow-sm"><CardContent className="p-8 text-center text-sm text-slate-500">
+            {activeTag ? `No posts tagged ${activeTag} yet.` : "No posts yet. Be the first to share something!"}
+          </CardContent></Card>
         )}
-        {posts.map((post) => <PostCard key={post.id} post={post} onLike={toggleLike} currentUser={session} />)}
+        {posts.map((post) => <PostCard key={post.id} post={post} onLike={toggleLike} onTagClick={(t) => setActiveTag(t)} currentUser={session} />)}
       </div>
 
       <div className="space-y-5">
         <Card className="rounded-3xl shadow-sm">
           <CardContent className="p-5">
             <h3 className="text-base font-bold text-slate-900">Trending</h3>
-            <div className="mt-4 space-y-3">
-              {["#Placements2026", "#TechFest", "#DSA", "#Hostel"].map((tag, i) => (
-                <div key={tag} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-pink-500 to-rose-500 text-white"><TrendingUp size={14} /></div>
-                    <p className="text-sm font-medium text-slate-800">{tag}</p>
-                  </div>
-                  <span className="text-xs text-slate-500">{120 - i * 18} posts</span>
-                </div>
-              ))}
-            </div>
+            {trending.length === 0 ? (
+              <p className="mt-4 text-xs text-slate-500">No tags yet. Use #hashtags in your posts to start a trend.</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {trending.map((t) => {
+                  const active = activeTag === t.tag;
+                  return (
+                    <button key={t.tag} type="button"
+                      onClick={() => setActiveTag(active ? "" : t.tag)}
+                      className={`flex w-full items-center justify-between rounded-2xl p-3 transition ${active ? "bg-indigo-100 ring-2 ring-indigo-300" : "bg-slate-50 hover:bg-slate-100"}`}>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-pink-500 to-rose-500 text-white"><TrendingUp size={14} /></div>
+                        <p className="text-sm font-medium text-slate-800">{t.tag}</p>
+                      </div>
+                      <span className="text-xs text-slate-500">{t.count} {t.count === 1 ? "post" : "posts"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -454,56 +605,288 @@ function ChatBubble({ message }) {
     <div className={`flex items-end gap-2 ${isUser ? "justify-end" : "justify-start"}`}>
       {!isUser && <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-600 to-violet-600 text-white"><Bot size={16} /></div>}
       <div className={`max-w-[80%] rounded-3xl px-4 py-3 text-sm leading-6 ${isUser ? "rounded-br-md bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-200" : "rounded-bl-md border border-slate-200 bg-white text-slate-800 shadow-sm"}`}>
-        <p>{message.text}</p>
-        {message.source && <div className="mt-3 flex items-center gap-2 rounded-2xl bg-slate-50 px-3 py-2 text-xs text-slate-600"><FileText size={12} /> Source: {message.source}</div>}
+        {message.attachment && (
+          <div className={`mb-2 inline-flex items-center gap-2 rounded-2xl px-3 py-1.5 text-xs ${isUser ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
+            <Paperclip size={12} />
+            <span className="font-medium">{message.attachment.name}</span>
+          </div>
+        )}
+        <p className="whitespace-pre-line">{message.content || message.text}</p>
+        {message.created_at && (
+          <p className={`mt-1 text-[10px] ${isUser ? "text-indigo-100" : "text-slate-400"}`}>{clockTime(message.created_at)}</p>
+        )}
+        {!isUser && message.powered_by && message.powered_by !== "stub" && (
+          <div className="mt-2 inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
+            <Sparkles size={10} /> Powered by {message.powered_by === "groq" ? "Groq · Llama 3.3" : "Gemini"}
+          </div>
+        )}
+        {message.source && (
+          <div className="mt-3 flex items-center gap-2 rounded-2xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <FileText size={12} /> Source: <span className="font-medium">{message.source}</span>
+          </div>
+        )}
+        {message.related && message.related.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {message.related.map((d) => (
+              <button
+                key={d.id}
+                onClick={() => api.documents.download(d.id, d.file_name).catch((e) => alert(e.message))}
+                className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700 transition hover:bg-indigo-100"
+              >
+                <FileText size={10} /> {d.title}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
+const WELCOME_MSG = { id: "welcome", role: "assistant", content: "Hi! I'm your Campus AI Copilot for IIT Hyderabad. Ask me anything about syllabus, placements, hostels, fests, or notices — or attach a PDF / text file and I'll analyse it." };
+
 function ChatPage() {
-  const [messages, setMessages] = useState([{ id: 1, role: "assistant", text: "Hi! I'm your Campus AI Copilot. Ask me anything about your syllabus, placements, exams, or campus notices." }]);
+  const [conversations, setConversations] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [messages, setMessages] = useState([WELCOME_MSG]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [docs, setDocs] = useState([]);
+  const [file, setFile] = useState(null);
+  const scrollRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  const send = async () => {
-    if (!input.trim() || busy) return;
-    setMessages((p) => [...p, { id: Date.now(), role: "user", text: input }]);
-    const q = input; setInput(""); setBusy(true);
+  const loadConversations = async () => {
+    try { const { conversations } = await api.ai.conversations(); setConversations(conversations); } catch { /* noop */ }
+  };
+
+  useEffect(() => {
+    let alive = true;
+    loadConversations();
+    api.ai.suggestions().then((d) => { if (alive) setSuggestions(d.suggestions || []); }).catch(() => {});
+    api.documents.list().then((d) => { if (alive) setDocs(d.documents || []); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, busy]);
+
+  const openConversation = async (id) => {
+    if (id === activeId) return;
     try {
-      const { answer, source } = await api.ai.chat(q);
-      setMessages((p) => [...p, { id: Date.now() + 1, role: "assistant", text: answer, source }]);
+      const { messages } = await api.ai.conversation(id);
+      const mapped = messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        source: m.source,
+        related: m.related || [],
+        powered_by: m.powered_by,
+        attachment: m.attachment_name ? { name: m.attachment_name } : null,
+        created_at: m.created_at,
+      }));
+      setActiveId(id);
+      setMessages(mapped.length ? mapped : [WELCOME_MSG]);
+    } catch (e) { alert(e.message); }
+  };
+
+  const newChat = () => {
+    setActiveId(null);
+    setMessages([WELCOME_MSG]);
+    setInput(""); setFile(null);
+  };
+
+  const deleteConversation = async (id, e) => {
+    e?.stopPropagation();
+    if (!confirm("Delete this conversation?")) return;
+    await api.ai.deleteConversation(id);
+    if (activeId === id) newChat();
+    loadConversations();
+  };
+
+  const send = async (textOverride) => {
+    const text = (textOverride ?? input).trim();
+    if (!text && !file) return;
+    if (busy) return;
+    const attachedFile = file;
+    const tempId = Date.now();
+    setMessages((p) => [...p, {
+      id: tempId, role: "user",
+      content: text || (attachedFile ? `Analyse "${attachedFile.name}"` : ""),
+      attachment: attachedFile ? { name: attachedFile.name } : null,
+      created_at: new Date().toISOString(),
+    }]);
+    setInput(""); setFile(null); setBusy(true);
+    try {
+      const { conversation_id, answer, source, related, powered_by } = await api.ai.chat(text, attachedFile, activeId);
+      setActiveId(conversation_id);
+      setMessages((p) => [...p, {
+        id: tempId + 1, role: "assistant",
+        content: answer, source, related, powered_by,
+        created_at: new Date().toISOString(),
+      }]);
+      loadConversations();
     } catch (e) {
-      setMessages((p) => [...p, { id: Date.now() + 1, role: "assistant", text: `Error: ${e.message}` }]);
+      setMessages((p) => [...p, {
+        id: tempId + 1, role: "assistant",
+        content: `Error: ${e.message}`,
+        created_at: new Date().toISOString(),
+      }]);
     } finally { setBusy(false); }
   };
 
-  const quickPrompts = ["Summarise the placement policy", "Next exam date?", "Hostel rules", "Build me a study plan"];
+  const onAttach = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) { alert("Max file size is 10 MB."); return; }
+    setFile(f);
+    e.target.value = "";
+  };
+
+  const tagColor = (cat) => {
+    const c = (cat || "").toLowerCase();
+    if (c === "placement") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    if (c === "syllabus") return "bg-indigo-50 text-indigo-700 border-indigo-200";
+    if (c === "exam") return "bg-amber-50 text-amber-700 border-amber-200";
+    if (c === "notice") return "bg-rose-50 text-rose-700 border-rose-200";
+    if (c === "timetable") return "bg-sky-50 text-sky-700 border-sky-200";
+    if (c === "plan") return "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200";
+    return "bg-slate-50 text-slate-700 border-slate-200";
+  };
 
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex h-[calc(100vh-65px)] flex-col p-5 md:p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h3 className="flex items-center gap-2 text-xl font-bold text-slate-900"><Sparkles size={20} className="text-indigo-600" /> Campus AI Copilot</h3>
-          <p className="text-sm text-slate-500">Grounded answers from your college documents.</p>
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid h-[calc(100vh-65px)] gap-4 p-5 md:p-6 lg:grid-cols-[260px_1fr_300px]">
+      <Card className="hidden flex-col overflow-hidden rounded-3xl shadow-sm lg:flex">
+        <div className="flex items-center justify-between border-b p-3">
+          <h4 className="text-sm font-bold text-slate-900">History</h4>
+          <Button size="sm" variant="soft" className="rounded-xl" onClick={newChat}><PlusCircle size={14} className="mr-1" /> New</Button>
         </div>
-        <Button variant="outline" className="rounded-2xl" onClick={() => setMessages([{ id: 1, role: "assistant", text: "New chat. What would you like to know?" }])}>New Chat</Button>
+        <div className="flex-1 overflow-y-auto p-2">
+          {conversations.length === 0 ? (
+            <p className="px-2 py-4 text-center text-xs text-slate-500">No past chats yet.</p>
+          ) : (
+            conversations.map((c) => {
+              const active = c.id === activeId;
+              return (
+                <div key={c.id}
+                  onClick={() => openConversation(c.id)}
+                  className={`group mb-1 flex cursor-pointer items-start gap-2 rounded-2xl p-2 text-left transition ${active ? "bg-indigo-50" : "hover:bg-slate-50"}`}>
+                  <MessageSquare size={14} className={`mt-1 shrink-0 ${active ? "text-indigo-600" : "text-slate-400"}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-slate-800">{c.title || "Untitled chat"}</p>
+                    <p className="truncate text-[10px] text-slate-500">{c.preview || "—"}</p>
+                    <p className="text-[10px] text-slate-400">{timeAgo(c.updated_at)}</p>
+                  </div>
+                  <button type="button" onClick={(e) => deleteConversation(c.id, e)}
+                    className="rounded-full p-1 text-slate-400 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100"><X size={12} /></button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </Card>
+
+      <div className="flex flex-col">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="flex items-center gap-2 text-xl font-bold text-slate-900"><Sparkles size={20} className="text-indigo-600" /> Campus AI Copilot</h3>
+            <p className="text-sm text-slate-500">Grounded answers from your college documents.</p>
+          </div>
+          <Button variant="outline" className="rounded-2xl" onClick={newChat}>New Chat</Button>
+        </div>
+
+        <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto rounded-3xl bg-gradient-to-b from-slate-50 to-white p-4">
+          {messages.map((m) => <ChatBubble key={m.id} message={m} />)}
+          {busy && <div className="flex justify-start"><Spinner /></div>}
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(suggestions.length ? suggestions : [
+            { q: "Summarise the placement policy", category: "Placement" },
+            { q: "When is the next exam?", category: "Exam" },
+            { q: "Hostel rules", category: "Notice" },
+            { q: "Build me a 7-day DSA study plan", category: "Plan" },
+          ]).slice(0, 8).map((s) => (
+            <button key={s.q} onClick={() => send(s.q)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-medium transition hover:opacity-80 ${tagColor(s.category)}`}>
+              {s.q}
+            </button>
+          ))}
+        </div>
+
+        {file && (
+          <div className="mt-3 flex items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
+            <Paperclip size={14} />
+            <span className="flex-1 truncate font-medium">{file.name}</span>
+            <span className="text-indigo-500">{(file.size / 1024).toFixed(1)} KB</span>
+            <button type="button" onClick={() => setFile(null)} className="rounded-full p-1 hover:bg-indigo-100"><X size={12} /></button>
+          </div>
+        )}
+
+        <div className="mt-3 flex items-center gap-2 rounded-3xl border border-slate-200 bg-white p-2 shadow-sm">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.txt,.md,.csv,.json,.log,application/pdf,text/*"
+            className="hidden"
+            onChange={onAttach}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="rounded-2xl"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach a PDF or text file"
+          >
+            <Paperclip size={18} />
+          </Button>
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && send()}
+            placeholder={file ? `Ask about "${file.name}"...` : "Ask about syllabus, placements, hostels, or attach a file..."}
+            className="flex-1 bg-transparent px-2 text-sm outline-none"
+          />
+          <Button onClick={() => send()} disabled={busy} className="rounded-2xl">
+            <Send size={16} className="mr-2" /> Send
+          </Button>
+        </div>
       </div>
-      <div className="flex-1 space-y-4 overflow-y-auto rounded-3xl bg-gradient-to-b from-slate-50 to-white p-4">
-        {messages.map((m) => <ChatBubble key={m.id} message={m} />)}
-        {busy && <div className="flex justify-start"><Spinner /></div>}
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {quickPrompts.map((p) => (
-          <button key={p} onClick={() => setInput(p)} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700">{p}</button>
-        ))}
-      </div>
-      <div className="mt-3 flex items-center gap-2 rounded-3xl border border-slate-200 bg-white p-2 shadow-sm">
-        <Button variant="ghost" size="icon" className="rounded-2xl"><Mic size={18} /></Button>
-        <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Ask about syllabus, placement rules, notices..." className="flex-1 bg-transparent px-2 text-sm outline-none" />
-        <Button variant="ghost" size="icon" className="rounded-2xl"><Volume2 size={18} /></Button>
-        <Button onClick={send} disabled={busy} className="rounded-2xl"><Send size={16} className="mr-2" /> Send</Button>
-      </div>
+
+      <Card className="hidden flex-col overflow-hidden rounded-3xl shadow-sm lg:flex">
+        <div className="border-b p-4">
+          <h4 className="flex items-center gap-2 text-base font-bold text-slate-900"><FileText size={16} /> Related Documents</h4>
+          <p className="mt-1 text-xs text-slate-500">The AI grounds its answers in these PDFs.</p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          {docs.length === 0 ? (
+            <div className="px-2 py-6 text-center text-xs text-slate-500">No documents uploaded yet. Ask the admin to upload syllabus, notices, or placement rules.</div>
+          ) : (
+            <ul className="space-y-2">
+              {docs.map((d) => (
+                <li key={d.id}>
+                  <button
+                    onClick={() => send(`Summarise "${d.title}"`)}
+                    className="flex w-full items-start gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white">
+                      <FileText size={16} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-900">{d.title}</p>
+                      <p className="truncate text-[11px] text-slate-500">{d.file_name}</p>
+                      <span className={`mt-1 inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${tagColor(d.category)}`}>{d.category}</span>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Card>
     </motion.div>
   );
 }
@@ -551,7 +934,7 @@ function ConnectPage() {
             <Card key={s.id} className="overflow-hidden rounded-3xl shadow-sm transition hover:shadow-md">
               <div className={`h-20 bg-gradient-to-r ${gradientForId(s.id)}`} />
               <CardContent className="-mt-10 p-5">
-                <Link to={`/profile/${s.id}`}><Avatar name={s.name} gradient={gradientForId(s.id)} size={64} /></Link>
+                <Link to={`/profile/${s.id}`}><Avatar name={s.name} src={api.avatarUrl(s.avatar_path)} gradient={gradientForId(s.id)} size={64} /></Link>
                 <Link to={`/profile/${s.id}`}><h4 className="mt-3 font-bold text-slate-900 hover:underline">{s.name}</h4></Link>
                 <p className="text-sm text-slate-500">{s.branch || "Student"}{s.year ? ` · ${s.year}` : ""}</p>
                 {s.interests && <p className="mt-2 text-xs text-slate-600">Interests: {s.interests}</p>}
@@ -686,7 +1069,11 @@ function DocumentsPage() {
                         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">{d.category}</span>
                         <span className={`rounded-full px-3 py-1 text-xs ${statusClass}`}>{d.status}</span>
                       </div>
-                      <a href={`${api.baseUrl}/api/documents/${d.id}/download`} className="mt-3 inline-block text-xs font-medium text-indigo-600 hover:underline" target="_blank" rel="noreferrer">Download PDF</a>
+                      <button
+                        type="button"
+                        onClick={() => api.documents.download(d.id, d.file_name).catch((e) => alert(e.message))}
+                        className="mt-3 inline-block text-xs font-medium text-indigo-600 hover:underline"
+                      >Download PDF</button>
                     </div>
                   </div>
                 </CardContent>
@@ -737,7 +1124,9 @@ function NotificationsPage({ refresh }) {
                 <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${color}`}><Icon size={18} /></div>
                 <div className="flex-1">
                   <p className="text-sm font-medium text-slate-800">{n.title}</p>
-                  <p className="mt-0.5 text-xs text-slate-500">{timeAgo(n.created_at)}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {clockTime(n.created_at)} <span className="text-slate-400">· {timeAgo(n.created_at)}</span>
+                  </p>
                 </div>
                 {!n.is_read && <span className="mt-2 h-2 w-2 rounded-full bg-indigo-500" />}
               </div>
@@ -859,7 +1248,7 @@ function MessagesPage({ session, onUnreadChange }) {
     if (!sock) return;
     const handler = (msg) => {
       if (activePeer && (msg.sender_id === activePeer.id || msg.recipient_id === activePeer.id)) {
-        setHistory((h) => [...h, msg]);
+        setHistory((h) => (h.some((m) => m.id === msg.id) ? h : [...h, msg]));
       }
       setConvReloadKey((k) => k + 1);
     };
@@ -883,8 +1272,14 @@ function MessagesPage({ session, onUnreadChange }) {
   const send = async () => {
     if (!draft.trim() || !activePeer) return;
     const text = draft; setDraft("");
-    try { await api.messages.send(activePeer.id, text); }
-    catch (e) { setDraft(text); alert(e.message); }
+    try {
+      const { message } = await api.messages.send(activePeer.id, text);
+      // Optimistically append; the socket echo (if any) will be deduped by id.
+      if (message) {
+        setHistory((h) => (h.some((m) => m.id === message.id) ? h : [...h, message]));
+        setConvReloadKey((k) => k + 1);
+      }
+    } catch (e) { setDraft(text); alert(e.message); }
   };
 
   const startConversation = (user) => {
@@ -937,7 +1332,7 @@ function MessagesPage({ session, onUnreadChange }) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between">
                     <p className="truncate text-sm font-semibold text-slate-900">{c.name}</p>
-                    <span className="ml-2 text-[10px] text-slate-400">{timeAgo(c.last_at)}</span>
+                    <span className="ml-2 text-[10px] text-slate-400">{clockTime(c.last_at)}</span>
                   </div>
                   <p className="truncate text-xs text-slate-500">{c.last_message || "Say hi 👋"}</p>
                 </div>
@@ -973,7 +1368,7 @@ function MessagesPage({ session, onUnreadChange }) {
                   <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                     <div className={`max-w-[75%] rounded-3xl px-4 py-2 text-sm ${mine ? "rounded-br-md bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm" : "rounded-bl-md border border-slate-200 bg-white text-slate-800"}`}>
                       <p>{m.content}</p>
-                      <p className={`mt-1 text-[10px] ${mine ? "text-indigo-100" : "text-slate-400"}`}>{timeAgo(m.created_at)}</p>
+                      <p className={`mt-1 text-[10px] ${mine ? "text-indigo-100" : "text-slate-400"}`}>{clockTime(m.created_at)}</p>
                     </div>
                   </div>
                 );
@@ -992,6 +1387,36 @@ function MessagesPage({ session, onUnreadChange }) {
 
 /* ---------- Profile Page ---------- */
 
+function FollowListModal({ open, title, users, onClose }) {
+  if (!open) return null;
+  return (
+    <>
+      <div onClick={onClose} className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm" />
+      <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-5 shadow-2xl">
+        <div className="flex items-center justify-between border-b pb-3">
+          <h3 className="text-lg font-bold text-slate-900">{title}</h3>
+          <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100"><X size={16} /></button>
+        </div>
+        <div className="mt-4 max-h-96 space-y-2 overflow-y-auto">
+          {users.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-500">No users yet.</p>
+          ) : users.map((u) => (
+            <Link key={u.id} to={`/profile/${u.id}`} onClick={onClose}
+              className="flex items-center gap-3 rounded-2xl p-2 transition hover:bg-slate-50">
+              <Avatar name={u.name} src={api.avatarUrl(u.avatar_path)} gradient={gradientForId(u.id)} size={40} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-slate-900">{u.name}</p>
+                <p className="truncate text-xs text-slate-500">{u.branch || ""}{u.year ? ` · ${u.year}` : ""}</p>
+              </div>
+              {u.is_following && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">Following</span>}
+            </Link>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function ProfilePage({ session, onSessionUpdate }) {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -1000,6 +1425,9 @@ function ProfilePage({ session, onSessionUpdate }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: "", branch: "", year: "", interests: "", bio: "" });
+  const [followList, setFollowList] = useState({ open: false, title: "", users: [] });
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarInputRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
@@ -1028,6 +1456,28 @@ function ProfilePage({ session, onSessionUpdate }) {
     setEditing(false);
   };
 
+  const onAvatar = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { alert("Max image size is 5 MB."); return; }
+    setAvatarBusy(true);
+    try {
+      const { user } = await api.auth.uploadAvatar(f);
+      setData((d) => ({ ...d, user: { ...d.user, avatar_path: user.avatar_path } }));
+      onSessionUpdate && onSessionUpdate(user);
+    } catch (err) { alert(err.message); }
+    finally { setAvatarBusy(false); e.target.value = ""; }
+  };
+
+  const showFollowers = async () => {
+    const { users } = await api.users.followers(id);
+    setFollowList({ open: true, title: "Followers", users });
+  };
+  const showFollowing = async () => {
+    const { users } = await api.users.following(id);
+    setFollowList({ open: true, title: "Following", users });
+  };
+
   if (loading) return <div className="flex justify-center py-20"><Spinner /></div>;
   if (!data) return <div className="p-10 text-center text-slate-500">User not found.</div>;
 
@@ -1040,9 +1490,25 @@ function ProfilePage({ session, onSessionUpdate }) {
         <CardContent className="-mt-12 p-6">
           <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
             <div className="flex items-end gap-4">
-              <Avatar name={u.name} gradient={gradientForId(u.id)} size={96} />
+              <div className="relative">
+                <Avatar name={u.name} src={api.avatarUrl(u.avatar_path)} gradient={gradientForId(u.id)} size={96} />
+                {isMe && (
+                  <>
+                    <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={onAvatar} />
+                    <button type="button" onClick={() => avatarInputRef.current?.click()} disabled={avatarBusy}
+                      className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-slate-900 text-white shadow-md transition hover:bg-slate-700 disabled:opacity-50"
+                      title="Change profile picture">
+                      <ImageIcon size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
               <div>
-                <h2 className="text-2xl font-bold text-slate-900">{u.name}</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-2xl font-bold text-slate-900">{u.name}</h2>
+                  {u.is_admin && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">ADMIN</span>}
+                  {u.is_suspended && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">SUSPENDED</span>}
+                </div>
                 <p className="text-sm text-slate-500">{u.branch || "Student"}{u.year ? ` · ${u.year}` : ""}</p>
                 {u.bio && <p className="mt-1 max-w-md text-sm text-slate-600">{u.bio}</p>}
               </div>
@@ -1064,8 +1530,14 @@ function ProfilePage({ session, onSessionUpdate }) {
 
           <div className="mt-6 grid grid-cols-3 gap-3 text-center">
             <div className="rounded-2xl bg-slate-50 p-4"><p className="text-xl font-bold text-slate-900">{data.counts.posts}</p><p className="text-xs text-slate-500">Posts</p></div>
-            <div className="rounded-2xl bg-slate-50 p-4"><p className="text-xl font-bold text-slate-900">{data.counts.followers}</p><p className="text-xs text-slate-500">Followers</p></div>
-            <div className="rounded-2xl bg-slate-50 p-4"><p className="text-xl font-bold text-slate-900">{data.counts.following}</p><p className="text-xs text-slate-500">Following</p></div>
+            <button onClick={showFollowers} className="rounded-2xl bg-slate-50 p-4 transition hover:bg-slate-100">
+              <p className="text-xl font-bold text-slate-900">{data.counts.followers}</p>
+              <p className="text-xs text-slate-500">Followers</p>
+            </button>
+            <button onClick={showFollowing} className="rounded-2xl bg-slate-50 p-4 transition hover:bg-slate-100">
+              <p className="text-xl font-bold text-slate-900">{data.counts.following}</p>
+              <p className="text-xs text-slate-500">Following</p>
+            </button>
           </div>
 
           {u.interests && (
@@ -1107,7 +1579,11 @@ function ProfilePage({ session, onSessionUpdate }) {
               <Card key={p.id} className="rounded-3xl shadow-sm">
                 <CardContent className="p-5">
                   <p className="text-xs text-slate-500">{timeAgo(p.created_at)}</p>
-                  <p className="mt-1 text-sm text-slate-700">{p.content}</p>
+                  {p.content && <p className="mt-1 text-sm text-slate-700">{p.content}</p>}
+                  {p.image_path && (
+                    <img src={api.postImageUrl(p.image_path)} alt="post"
+                      className="mt-2 max-h-80 w-full rounded-2xl object-cover" loading="lazy" />
+                  )}
                   {p.tags?.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-2">
                       {p.tags.map((t) => <span key={t} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">{t}</span>)}
@@ -1119,6 +1595,216 @@ function ProfilePage({ session, onSessionUpdate }) {
           </div>
         )}
       </div>
+
+      <FollowListModal
+        open={followList.open}
+        title={followList.title}
+        users={followList.users}
+        onClose={() => setFollowList({ open: false, title: "", users: [] })}
+      />
+    </motion.div>
+  );
+}
+
+/* ---------- Terms & Conditions Page ---------- */
+
+function TermsPage() {
+  const sections = [
+    {
+      title: "1. Acceptance of Terms",
+      body: `By creating an account or using Campus AI Copilot ("the Platform"), you agree to be bound by these Terms and Conditions. If you do not agree, you must stop using the Platform immediately. The Platform is provided exclusively for verified students, faculty, and staff of IIT Hyderabad.`,
+    },
+    {
+      title: "2. Eligibility",
+      body: `You must be at least 17 years old and a current student or affiliated member of IIT Hyderabad to register. You agree to provide accurate, current, and complete information during sign-up and to keep your profile up to date. Sharing your account credentials with anyone else is strictly prohibited.`,
+    },
+    {
+      title: "3. Acceptable Use",
+      body: `You agree to use the Platform only for lawful, academic, and community-building purposes. You will not post, comment, or message content that is: (a) abusive, harassing, threatening, defamatory, or hateful; (b) sexually explicit, obscene, or vulgar; (c) discriminatory on the basis of caste, religion, gender, sexuality, region, or disability; (d) related to ragging, bullying, or intimidation; (e) infringing on intellectual property; (f) promoting illegal activity, drugs, weapons, or self-harm; (g) commercial spam, scams, or unsolicited advertising; (h) malware, phishing links, or otherwise harmful technical content.`,
+    },
+    {
+      title: "4. Content Moderation",
+      body: `Posts, comments, and direct messages are scanned for prohibited language. The first detected violation will result in a written warning sent to you via the Platform's notification system. A second violation will result in immediate suspension of your account. Suspended users retain read-only access but cannot post, comment, message, or share. Manual moderation review may extend, reduce, or reverse automated decisions.`,
+    },
+    {
+      title: "5. Academic Integrity",
+      body: `The AI Copilot is a study aid grounded in officially uploaded college documents. You may not use it to fabricate assignments, copy graded work, impersonate another student, or otherwise violate IIT Hyderabad's academic integrity policy. Using the Platform to cheat is a violation of both these Terms and the institute's code of conduct.`,
+    },
+    {
+      title: "6. Privacy and Data",
+      body: `We collect the information you provide (name, college email, branch, year, interests, bio, profile picture, posts, comments, messages, AI chat history) and limited technical metadata required to operate the service. Your data is stored on servers controlled by the Platform operator and is not sold to third parties. AI prompts may be sent to third-party LLM providers (Groq, Google Gemini) under their respective privacy terms. Direct messages are visible only to the sender and recipient but may be reviewed by administrators in cases of reported abuse.`,
+    },
+    {
+      title: "7. Uploaded Documents",
+      body: `Only verified administrators may upload knowledge documents. Uploaders confirm they have the right to share the document, that it does not contain confidential personal data of third parties, and that it complies with IIT Hyderabad's information-sharing policies. The Platform reserves the right to remove any uploaded document at any time.`,
+    },
+    {
+      title: "8. Intellectual Property",
+      body: `You retain ownership of the content you post. By posting, you grant the Platform a non-exclusive, royalty-free license to display, distribute, and reproduce your content within the Platform for the purpose of operating the service. Logos, designs, and source code of the Platform itself remain the property of its developers.`,
+    },
+    {
+      title: "9. Termination",
+      body: `You may delete your account at any time from the Settings page. We may suspend or terminate your account without prior notice if you violate these Terms, the law, or IIT Hyderabad's policies. Termination removes your access; certain content (e.g., shared messages, comments on others' posts) may persist for the integrity of conversations.`,
+    },
+    {
+      title: "10. Disclaimer of Warranties",
+      body: `The Platform is provided "as is" without warranty of any kind. AI-generated answers may be incomplete or inaccurate; always verify critical academic, placement, or administrative information against official IIT Hyderabad sources. The Platform is a student project and is not an official communication channel of IIT Hyderabad.`,
+    },
+    {
+      title: "11. Limitation of Liability",
+      body: `To the maximum extent permitted by law, the Platform's developers shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising from your use of the Platform.`,
+    },
+    {
+      title: "12. Changes to Terms",
+      body: `We may update these Terms periodically. Continued use of the Platform after changes constitutes acceptance of the revised Terms. Material changes will be announced via in-app notification.`,
+    },
+    {
+      title: "13. Contact",
+      body: `Questions, abuse reports, or appeals can be raised through the Notifications system or by contacting an administrator. We aim to respond within seven business days.`,
+    },
+  ];
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-3xl space-y-5 p-5 md:p-6">
+      <Card className="rounded-3xl shadow-sm">
+        <CardContent className="p-6 md:p-8">
+          <div className="mb-6 flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white"><ScrollText size={22} /></div>
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">Terms & Conditions</h2>
+              <p className="text-sm text-slate-500">Campus AI Copilot · IIT Hyderabad · Last updated 6 May 2026</p>
+            </div>
+          </div>
+          <div className="space-y-5 text-sm leading-7 text-slate-700">
+            {sections.map((s) => (
+              <section key={s.title}>
+                <h3 className="font-bold text-slate-900">{s.title}</h3>
+                <p className="mt-2 text-slate-600">{s.body}</p>
+              </section>
+            ))}
+          </div>
+          <div className="mt-8 rounded-2xl bg-amber-50 p-4 text-xs text-amber-800">
+            By continuing to use Campus AI Copilot you confirm that you have read, understood, and agreed to these Terms.
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+/* ---------- Settings Page ---------- */
+
+function Toggle({ checked, onChange }) {
+  return (
+    <button onClick={() => onChange(!checked)} type="button"
+      className={`relative h-6 w-11 rounded-full transition ${checked ? "bg-indigo-600" : "bg-slate-300"}`}>
+      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${checked ? "left-5" : "left-0.5"}`} />
+    </button>
+  );
+}
+
+function SettingsPage({ session, onSignOut }) {
+  const navigate = useNavigate();
+  const loadPrefs = () => {
+    try { return JSON.parse(localStorage.getItem("campus_ai_prefs") || "{}"); } catch { return {}; }
+  };
+  const [prefs, setPrefs] = useState(() => ({
+    notify_messages: true,
+    notify_likes: true,
+    notify_comments: true,
+    notify_follows: true,
+    show_online: true,
+    allow_messages_followers_only: false,
+    ...loadPrefs(),
+  }));
+
+  const update = (key, value) => {
+    const next = { ...prefs, [key]: value };
+    setPrefs(next);
+    localStorage.setItem("campus_ai_prefs", JSON.stringify(next));
+  };
+
+  const Row = ({ title, desc, k }) => (
+    <div className="flex items-center justify-between gap-4 py-3">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-slate-900">{title}</p>
+        {desc && <p className="text-xs text-slate-500">{desc}</p>}
+      </div>
+      <Toggle checked={!!prefs[k]} onChange={(v) => update(k, v)} />
+    </div>
+  );
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-2xl space-y-5 p-5 md:p-6">
+      <Card className="rounded-3xl shadow-sm">
+        <CardContent className="p-6">
+          <h2 className="text-xl font-bold text-slate-900">Settings</h2>
+          <p className="mt-1 text-sm text-slate-500">Manage your account preferences and privacy.</p>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-3xl shadow-sm">
+        <CardContent className="p-6">
+          <h3 className="text-base font-bold text-slate-900">Account</h3>
+          <div className="mt-3 space-y-2 text-sm">
+            <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+              <span className="text-slate-500">Name</span>
+              <span className="font-medium text-slate-900">{session?.name}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+              <span className="text-slate-500">Email</span>
+              <span className="font-medium text-slate-900">{session?.email}</span>
+            </div>
+            {session?.is_admin && (
+              <div className="flex items-center justify-between rounded-2xl bg-amber-50 px-4 py-3">
+                <span className="text-amber-700">Role</span>
+                <span className="font-bold text-amber-700">Administrator</span>
+              </div>
+            )}
+            {(session?.warnings || 0) > 0 && (
+              <div className="flex items-center justify-between rounded-2xl bg-rose-50 px-4 py-3">
+                <span className="text-rose-700">Policy warnings</span>
+                <span className="font-bold text-rose-700">{session.warnings}</span>
+              </div>
+            )}
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <Button variant="outline" className="rounded-2xl" onClick={() => navigate(`/profile/${session?.id}`)}><User size={14} className="mr-2" /> Edit profile</Button>
+            <Button variant="outline" className="rounded-2xl" onClick={() => navigate("/change-password")}><KeyRound size={14} className="mr-2" /> Change password</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-3xl shadow-sm">
+        <CardContent className="p-6">
+          <h3 className="text-base font-bold text-slate-900">Notifications</h3>
+          <div className="mt-2 divide-y divide-slate-100">
+            <Row title="New messages" desc="Get notified when someone sends you a DM" k="notify_messages" />
+            <Row title="Likes on your posts" desc="When someone likes a post you wrote" k="notify_likes" />
+            <Row title="Comments" desc="When someone comments on your post" k="notify_comments" />
+            <Row title="New followers" desc="When someone follows you" k="notify_follows" />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-3xl shadow-sm">
+        <CardContent className="p-6">
+          <h3 className="text-base font-bold text-slate-900">Privacy</h3>
+          <div className="mt-2 divide-y divide-slate-100">
+            <Row title="Show I'm online" desc="Show your active status to other students" k="show_online" />
+            <Row title="DMs from followers only" desc="Only people who follow you can message you" k="allow_messages_followers_only" />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-3xl shadow-sm">
+        <CardContent className="p-6">
+          <h3 className="text-base font-bold text-slate-900">About</h3>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <Button variant="outline" className="rounded-2xl" onClick={() => navigate("/terms")}><ScrollText size={14} className="mr-2" /> Terms & Conditions</Button>
+            <Button variant="outline" className="rounded-2xl" onClick={onSignOut}><LogOut size={14} className="mr-2" /> Sign out</Button>
+          </div>
+        </CardContent>
+      </Card>
     </motion.div>
   );
 }
@@ -1515,6 +2201,7 @@ export default function App() {
       <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <LoginPage onAuth={handleAuth} />} />
       <Route path="/signup" element={session ? <Navigate to="/dashboard" replace /> : <SignupPage onAuth={handleAuth} />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/terms-public" element={<TermsPage />} />
 
       <Route element={<ProtectedLayout session={session} badges={badges} onSignOut={handleSignOut} profileOpen={profileOpen} setProfileOpen={setProfileOpen} />}>
         <Route path="/dashboard" element={<DashboardPage session={session} stats={stats} />} />
@@ -1526,8 +2213,10 @@ export default function App() {
         <Route path="/events" element={<EventsPage />} />
         <Route path="/documents" element={<DocumentsPage />} />
         <Route path="/notifications" element={<NotificationsPage refresh={refreshUnread} />} />
-        <Route path="/admin" element={<AdminUploadPage />} />
+        <Route path="/admin" element={session?.is_admin ? <AdminUploadPage /> : <Navigate to="/dashboard" replace />} />
         <Route path="/profile/:id" element={<ProfilePage session={session} onSessionUpdate={(u) => setSession((s) => ({ ...s, ...u }))} />} />
+        <Route path="/settings" element={<SettingsPage session={session} onSignOut={handleSignOut} />} />
+        <Route path="/terms" element={<TermsPage />} />
         <Route path="/change-password" element={<ChangePasswordPage />} />
       </Route>
 
